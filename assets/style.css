@@ -116,15 +116,6 @@ h1, h2, h3, h4 { color: var(--ink) !important; font-family: var(--font) !importa
 .stButton > button[kind="secondary"], [data-testid="stBaseButton-secondary"], .stFormSubmitButton > button {
   background: #fff !important; border: 1px solid var(--line) !important; color: var(--ink) !important; }
 .stButton > button[kind="secondary"]:hover { border-color: var(--navy) !important; }
-.st-key-demo_odonil button { background: var(--red-bg) !important; border-color: var(--red-line) !important; color: #8E2A26 !important; font-size: .86rem !important; }
-.st-key-demo_odonil button:hover { border-color: var(--red) !important; }
-.st-key-demo_havells button { background: var(--green-bg) !important; border-color: var(--green-line) !important; color: #0C6B41 !important; font-size: .86rem !important; }
-.st-key-demo_havells button:hover { border-color: var(--green) !important; }
-.st-key-demo_odonil button p, .st-key-demo_havells button p { font-size: .84rem !important; white-space: nowrap; }
-.st-key-demo_odonil button, .st-key-demo_havells button { padding-left: .5rem !important; padding-right: .5rem !important; }
-.demo-divider { display: flex; align-items: center; gap: .7rem; margin: .45rem 0 .1rem 0; }
-.demo-divider::before, .demo-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.demo-divider span { font-size: .88rem; font-weight: 700; color: var(--ink); white-space: nowrap; }
 
 /* ---------- Result banner ---------- */
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }

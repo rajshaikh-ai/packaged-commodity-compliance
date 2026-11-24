@@ -23,14 +23,6 @@ st.set_page_config(page_title="Label Compliance · SIH26034", page_icon="🔎", 
 st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}</style>",
             unsafe_allow_html=True)
 
-# Quick-demo photos. The buttons only load the photo and run the normal
-# pipeline. For the Odonil photo, OCR cannot read the pen-written dates, so the
-# demo also enters them as a MANUAL correction (shown as such in the UI).
-DEMO_SAMPLES = {
-    "odonil": {"file": "odonil_neem.jpg", "manual_dates": ("06/2020", "05/2026")},
-    "havells": {"file": "havells_led_lamp.jpg", "manual_dates": None},
-}
-
 # ---------------------------------------------------------------------------
 # Icons (inline SVG, stroke = currentColor)
 # ---------------------------------------------------------------------------
@@ -103,25 +95,15 @@ def get_metrics():
 #   current   : the image being inspected {"data", "name", "digest", "origin"}
 #   analysis  : OCR + extracted fields for `current`
 #   overrides : manual date corrections {"mfg"/"exp": (date, precision, raw)}
-#   pending   : demo sample waiting to be analysed
 # ---------------------------------------------------------------------------
 ss = st.session_state
-for k, v in {"uploader_key": 0, "current": None, "analysis": None, "overrides": {}, "pending": None}.items():
+for k, v in {"uploader_key": 0, "current": None, "analysis": None, "overrides": {}}.items():
     ss.setdefault(k, v)
 
 
 def reset():
     ss.uploader_key += 1
-    ss.current, ss.analysis, ss.overrides, ss.pending = None, None, {}, None
-
-
-def load_demo(key: str):
-    """Quick Demo button: load the sample photo; it is analysed on this run."""
-    data = (ROOT / "samples" / DEMO_SAMPLES[key]["file"]).read_bytes()
-    reset()
-    ss.current = {"data": data, "name": DEMO_SAMPLES[key]["file"],
-                  "digest": hashlib.md5(data).hexdigest(), "origin": "sample"}
-    ss.pending = key
+    ss.current, ss.analysis, ss.overrides = None, None, {}
 
 
 def parse_overrides(mfg_raw: str, exp_raw: str) -> tuple[dict, list[str]]:
@@ -150,16 +132,11 @@ def analyse(status_parent) -> None:
             fields = extract_fields(ocr.text, ocr.largest_text)
             ss.analysis = {"digest": ss.current["digest"], "ocr": ocr, "fields": fields}
             ss.overrides = {}
-            demo = DEMO_SAMPLES.get(ss.pending or "")
-            if demo and demo["manual_dates"]:
-                ss.overrides, _ = parse_overrides(*demo["manual_dates"])
             status.update(label="Analysis complete", state="complete", expanded=False)
         except Exception as exc:  # keep the app alive on any OCR failure
             ss.analysis = None
             status.update(label="Analysis failed", state="error")
             st.error(f"Could not analyse this image: {exc}")
-        finally:
-            ss.pending = None
 
 
 # ---------------------------------------------------------------------------
@@ -220,7 +197,7 @@ with left:
             digest = hashlib.md5(data).hexdigest()
             if not ss.current or ss.current["digest"] != digest:
                 ss.current = {"data": data, "name": upload.name, "digest": digest, "origin": "upload"}
-                ss.analysis, ss.overrides, ss.pending = None, {}, None
+                ss.analysis, ss.overrides = None, {}
         elif ss.current and ss.current["origin"] == "upload":   # uploaded file was removed
             ss.current, ss.analysis, ss.overrides = None, None, {}
 
@@ -237,16 +214,8 @@ with left:
         st.button("New Scan", icon=":material/refresh:", width="stretch", on_click=reset,
                   disabled=ss.current is None)
 
-        html('<div class="demo-divider"><span>Quick Demo (Sample Products)</span></div>')
-        d1, d2 = st.columns(2, gap="small")
-        with d1:
-            st.button("Test Odonil Sample", key="demo_odonil", icon=":material/inventory_2:",
-                      width="stretch", on_click=load_demo, args=("odonil",))
-        with d2:
-            st.button("Test Havells Sample", key="demo_havells", icon=":material/lightbulb:",
-                      width="stretch", on_click=load_demo, args=("havells",))
 
-        if ss.current and image_ok and (analyse_clicked or ss.pending):
+        if ss.current and image_ok and analyse_clicked:
             analyse(st)
 
 # ---------------------------------------------------------------------------
@@ -346,8 +315,8 @@ with right:
     if ss.current is None:
         html(f"""<div class="empty"><div class="icon">{icon('ocr', size=28)}</div>
         <h3>Results will appear here</h3>
-        <p>Upload a clear photo of the label panel, or try one of the sample products,
-        then press <b>Analyze Label</b>.</p></div>""")
+        <p>Upload a clear photo of the label panel that shows MRP, net quantity, dates
+        and manufacturer details, then press <b>Analyze Label</b>.</p></div>""")
     elif analysis is None:
         render_banner(None)
         c1, _ = st.columns([1, 1.9])
