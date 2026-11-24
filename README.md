@@ -1,8 +1,8 @@
 # Packaged Commodity Compliance Classification from Product Labels
 **Project code: SIH26034** · *Intelligent Product Label Inspection*
 
-**Live demo:** https://sih26034-label-inspection.streamlit.app
-(free hosting: if the app has been idle it may "sleep". Click *Yes, get this app back up* and wait ~1 minute.)
+**Live demo:** https://sih26034-label-inspection.streamlit.app/?embed=true
+(`?embed=true` shows the app without the hosting badge. Free hosting: if the app has been idle it may "sleep". Click *Yes, get this app back up* and wait ~1 minute.)
 
 A small, fully local machine-learning project. You upload a photo of a product's
 packaging label. The app then:
