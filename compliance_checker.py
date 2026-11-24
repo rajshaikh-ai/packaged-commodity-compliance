@@ -132,7 +132,7 @@ def check_label(fields: LabelFields, bundle: dict, today: date | None = None,
     if date_failed:
         status = "NON-COMPLIANT"
         first = next(i for i in issues if i.kind in ("expired", "date"))
-        reason = ("Product appears to be past its declared use-by/expiry date."
+        reason = ("The declared expiry date has passed."
                   if first.kind == "expired" else f"Date check failed: {first.title.lower()}.")
     elif ml_label == "NON-COMPLIANT":
         status = "NON-COMPLIANT"

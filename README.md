@@ -183,9 +183,10 @@ Your browser opens at http://localhost:8501.
      print, and OCR only reads fragments (`06 0`, `05_`). The app therefore shows
      🟠 **Unable to confidently analyze label** and doesn't guess. MRP heading,
      192 g, Dabur India Ltd, address and toll-free number are all still read.
-   - The **Correct a misread date** box opens automatically. Type `06/2020` and
-     `05/2026` and press **Re-run validation** → 🔴 **NON-COMPLIANT**
-     (*Product appears to be past its declared use-by/expiry date*). Both dates
+   - The **Correct a misread date** box opens automatically, right under the
+     result. Type `06/2020` and `05/2026` and press **Validate** →
+     🔴 **NON-COMPLIANT — EXPIRED PRODUCT**, *Expiry Date: May 2026*,
+     *Reason: The declared expiry date has passed.* Both dates
      are tagged **MANUAL** so it is clear they are not OCR output.
    - If a clearer photo lets OCR read `06/20` and `05/26` fully, the
      legend-layout rule pairs them automatically and the result is NON-COMPLIANT

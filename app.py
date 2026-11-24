@@ -195,9 +195,14 @@ def value_state(value: str | None) -> str:
     return "unk" if value.startswith("Declared") else "ok"
 
 
-def render_verdict(v: Verdict):
+def render_verdict(v: Verdict, expiry_text: str = ""):
+    expired = any(i.kind == "expired" for i in v.issues)
+    reason = escape(v.reason)
     if v.status == "COMPLIANT":
         cls, ico, title = "ok", "shield_ok", "COMPLIANT"
+    elif v.status == "NON-COMPLIANT" and expired:
+        cls, ico, title = "bad", "shield_bad", "NON-COMPLIANT — EXPIRED PRODUCT"
+        reason = f"<b>Expiry Date:</b> {escape(expiry_text)}<br><b>Reason:</b> {reason}"
     elif v.status == "NON-COMPLIANT":
         cls, ico, title = "bad", "shield_bad", "NON-COMPLIANT"
     else:
@@ -210,7 +215,42 @@ def render_verdict(v: Verdict):
                 f'<span>Completeness: {v.features["label_completeness"]:.0%}</span></div>')
     html(f"""<div class="verdict {cls}"><div class="v-icon">{icon(ico, size=24)}</div><div>
       <p class="v-kicker">Classification result</p><p class="v-title">{title}</p>
-      <p class="v-reason">{escape(v.reason)}</p>{meta}</div></div>""")
+      <p class="v-reason">{reason}</p>{meta}</div></div>""")
+
+
+def date_correction(expanded: bool):
+    """Manual date entry for dates OCR could not read (clearly marked as manual)."""
+    mo, eo = ss.overrides.get("mfg"), ss.overrides.get("exp")
+    with st.expander("Correct a misread date (manual correction)", expanded=expanded):
+        st.caption("Use this only if OCR misread a printed or handwritten date. Values entered here are "
+                   "marked **manual** and are not OCR output. Formats: 05/2026, MAY 2026, 31/05/2026.")
+        with st.form("manual_dates"):
+            f1, f2 = st.columns(2)
+            mfg_in = f1.text_input("Manufacturing date", value=mo[2] if mo else "", placeholder="e.g. 06/2020")
+            exp_in = f2.text_input("Use-by / expiry date", value=eo[2] if eo else "", placeholder="e.g. 05/2026")
+            b1, b2 = st.columns(2)
+            apply_btn = b1.form_submit_button("Validate", type="primary", width="stretch")
+            clear_btn = b2.form_submit_button("Clear corrections", width="stretch")
+        if apply_btn:
+            new, errors = {}, []
+            for key, raw, name in (("mfg", mfg_in, "Manufacturing date"), ("exp", exp_in, "Expiry date")):
+                if raw.strip():
+                    parsed = parse_user_date(raw)
+                    if parsed:
+                        value, precision = parsed
+                        if key == "exp" and precision == "month":   # use-by month = valid through month end
+                            value = month_end(value)
+                        new[key] = (value, precision, raw.strip())
+                    else:
+                        errors.append(f"{name}: could not understand '{raw}'.")
+            if errors:
+                st.error(" ".join(errors))
+            else:
+                ss.overrides = new
+                st.rerun()
+        if clear_btn:
+            ss.overrides = {}
+            st.rerun()
 
 
 with right:
@@ -225,7 +265,14 @@ with right:
         verdict = check_label(fields, bundle, today=today,
                               mfg_override=mo[0] if mo else None,
                               expiry_override=eo[0] if eo else None)
-        render_verdict(verdict)
+        dd = fields.dates
+        corrections_on_top = bool(ss.overrides) or (
+            verdict.status == "UNABLE" and bool(dd.get("date_declared") or dd.get("fragments")))
+        exp_display = (fmt_date(eo[0], eo[1] == "month") if eo else
+                       fmt_date(verdict.expiry_date, dd.get("expiry_precision") == "month"))
+        render_verdict(verdict, exp_display)
+        if corrections_on_top:
+            date_correction(expanded=True)
 
         # ---- Product information --------------------------------------
         d = fields.dates
@@ -273,38 +320,8 @@ with right:
             items = f'<p class="no-issues">{icon("ok", "ok")} No configured issues detected.</p>'
         html(f'<div class="panel"><h4>Detected issues</h4>{items}</div>')
 
-        # ---- Manual date correction -------------------------------------
-        with st.expander("Correct a misread date (manual correction)",
-                         expanded=bool(unreadable and not (mfg_txt and exp_val)) or bool(ss.overrides)):
-            st.caption("Use this only if OCR misread a printed or handwritten date. Values entered here are "
-                       "marked **manual** and are not OCR output. Formats: 05/2026, MAY 2026, 31/05/2026.")
-            with st.form("manual_dates"):
-                f1, f2 = st.columns(2)
-                mfg_in = f1.text_input("Manufacturing date", value=mo[2] if mo else "", placeholder="e.g. 06/2020")
-                exp_in = f2.text_input("Use-by / expiry date", value=eo[2] if eo else "", placeholder="e.g. 05/2026")
-                b1, b2 = st.columns(2)
-                apply_btn = b1.form_submit_button("Re-run validation", width="stretch")
-                clear_btn = b2.form_submit_button("Clear corrections", width="stretch")
-            if apply_btn:
-                new, errors = {}, []
-                for key, raw, name in (("mfg", mfg_in, "Manufacturing date"), ("exp", exp_in, "Expiry date")):
-                    if raw.strip():
-                        parsed = parse_user_date(raw)
-                        if parsed:
-                            value, precision = parsed
-                            if key == "exp" and precision == "month":   # use-by month = valid through month end
-                                value = month_end(value)
-                            new[key] = (value, precision, raw.strip())
-                        else:
-                            errors.append(f"{name}: could not understand '{raw}'.")
-                if errors:
-                    st.error(" ".join(errors))
-                else:
-                    ss.overrides = new
-                    st.rerun()
-            if clear_btn:
-                ss.overrides = {}
-                st.rerun()
+        if not corrections_on_top:
+            date_correction(expanded=False)
 
         # ---- OCR text + pipeline internals ------------------------------
         with st.expander("View Extracted Text"):

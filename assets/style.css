@@ -151,3 +151,8 @@ pre, code { font-size: .8rem !important; }
   .metric-grid { grid-template-columns: repeat(2, 1fr); }
   .verdict .v-title { font-size: 1.3rem; }
 }
+
+/* Primary form button (manual date "Validate") */
+.stFormSubmitButton > button[kind="primaryFormSubmit"], [data-testid="stBaseButton-primaryFormSubmit"] {
+  background: var(--ink) !important; border: 1px solid var(--ink) !important; color: #fff !important; }
+.stButton button p, .stFormSubmitButton button p { color: inherit !important; }
