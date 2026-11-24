@@ -11,7 +11,9 @@ Pipeline:  image -> resize -> grayscale -> denoise -> contrast (CLAHE)
 
 from __future__ import annotations
 
+import gc
 import io
+import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
 
@@ -30,6 +32,9 @@ MAX_SIDE = 1800      # large photos are scaled down (faster OCR, less noise)
 MIN_SIDE = 1100      # small photos are upscaled (small text becomes readable)
 MIN_WORDS = 12       # fewer words than this triggers the thresholded second pass
 GAP_FACTOR = 4.0     # horizontal gap (in text heights) that splits a row into columns
+CANVAS_SIZE = 1280   # max image side for the text detector: peak RAM ~1.5 GB instead of ~2.5 GB
+
+_OCR_LOCK = threading.Lock()   # one OCR job at a time, so two visitors can't double the peak
 
 
 
@@ -129,20 +134,27 @@ def _group_into_lines(detections: list) -> tuple[list[str], str | None]:
     return lines, largest
 
 
-def _read(image: np.ndarray) -> list:
-    return get_reader().readtext(image, paragraph=False)
+def _read(reader, image: np.ndarray) -> list:
+    # canvas_size caps the size of the image the text detector works on, and
+    # batch_size=1 recognises one word at a time: together they keep peak
+    # memory low enough for free hosting (about 1 GB RAM).
+    with _OCR_LOCK:
+        return reader.readtext(image, paragraph=False, canvas_size=CANVAS_SIZE, batch_size=1)
 
 
-def run_ocr(bgr: np.ndarray) -> OCRResult:
+def run_ocr(bgr: np.ndarray, reader=None) -> OCRResult:
+    """reader: an already-loaded EasyOCR reader (the web app passes its cached one)."""
+    reader = reader or get_reader()
     stages = preprocess(bgr)
-    detections = _read(stages["Contrast enhanced"])
+    detections = _read(reader, stages["Contrast enhanced"])
     pass_used = "enhanced"
 
     if sum(len(t.split()) for _, t, _ in detections) < MIN_WORDS:
-        second = _read(stages["Thresholded"])
+        second = _read(reader, stages["Thresholded"])
         if len(second) > len(detections):
             detections, pass_used = second, "thresholded"
 
+    gc.collect()   # release the detector's large temporary arrays straight away
     lines, largest = _group_into_lines(detections)
     confs = [c for _, _, c in detections] or [0.0]
     text = "\n".join(lines)

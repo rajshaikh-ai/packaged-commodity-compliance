@@ -16,7 +16,7 @@ import streamlit as st
 
 from compliance_checker import Verdict, check_label, load_model
 from feature_extractor import extract_fields, month_end, parse_user_date
-from ocr_engine import load_image, run_ocr
+from ocr_engine import get_reader, load_image, run_ocr
 
 ROOT = Path(__file__).parent
 st.set_page_config(page_title="Label Compliance · SIH26034", page_icon="🔎", layout="wide")
@@ -50,6 +50,16 @@ def html(markup: str) -> None:
 # ---------------------------------------------------------------------------
 # Cached resources
 # ---------------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def get_ocr_reader():
+    """One EasyOCR model for the whole server, shared by all visitors.
+
+    st.cache_resource survives Streamlit code reloads, so the ~500 MB model
+    is never loaded twice (a second copy would exceed free-hosting memory).
+    """
+    return get_reader()
+
+
 @st.cache_resource(show_spinner="Loading model…")
 def get_model():
     try:
@@ -136,7 +146,7 @@ with left:
         with st.status("Analysing label…", expanded=True) as status:
             try:
                 st.write("Preprocessing image and reading text (first run loads the OCR model)…")
-                ocr = run_ocr(image)
+                ocr = run_ocr(image, reader=get_ocr_reader())
                 st.write(f"OCR read {ocr.word_count} words · mean confidence {ocr.mean_confidence:.0%}")
                 st.write("Extracting label fields and dates…")
                 fields = extract_fields(ocr.text, ocr.largest_text)
