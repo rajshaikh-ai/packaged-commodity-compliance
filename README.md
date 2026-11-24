@@ -174,7 +174,20 @@ streamlit run app.py
 Your browser opens at http://localhost:8501.
 
 ## Test both sample images
-### In the app
+### Quickest: the Quick Demo buttons
+Under **Upload Product Label** there are two buttons:
+- **Test Havells Sample** loads `samples/havells_led_lamp.jpg` and runs the full
+  pipeline → 🟢 **COMPLIANT**.
+- **Test Odonil Sample** loads `samples/odonil_neem.jpg` and runs the full
+  pipeline. OCR can't read the pen-written dates, so the button also enters
+  the demo dates (Mfg 06/2020, Use-by 05/2026) as a **MANUAL** correction →
+  🔴 **NON-COMPLIANT — EXPIRED PRODUCT**. The dates show a MANUAL tag, and the
+  issues list says "Dates entered manually", so it is clear they are not OCR output.
+
+The buttons never pick the result themselves: the verdict always comes from the
+OCR features, the ML model and the date check.
+
+### Uploading a photo yourself
 1. **Havells LED lamp**: upload `samples/havells_led_lamp.jpg` → **Analyze Label** →
    expected 🟢 **COMPLIANT** (*No configured label issues were detected*).
 2. **Odonil Neem** (dates changed by pen to Mfg 06/2020, Use by 05/2026): upload

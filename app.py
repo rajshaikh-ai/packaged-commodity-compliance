@@ -14,7 +14,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from compliance_checker import Verdict, check_label, load_model
+from compliance_checker import FIELD_NAMES, Verdict, check_label, load_model
 from feature_extractor import extract_fields, month_end, parse_user_date
 from ocr_engine import get_reader, load_image, run_ocr
 
@@ -23,18 +23,37 @@ st.set_page_config(page_title="Label Compliance · SIH26034", page_icon="🔎", 
 st.markdown(f"<style>{(ROOT / 'assets' / 'style.css').read_text(encoding='utf-8')}</style>",
             unsafe_allow_html=True)
 
+# Quick-demo photos. The buttons only load the photo and run the normal
+# pipeline. For the Odonil photo, OCR cannot read the pen-written dates, so the
+# demo also enters them as a MANUAL correction (shown as such in the UI).
+DEMO_SAMPLES = {
+    "odonil": {"file": "odonil_neem.jpg", "manual_dates": ("06/2020", "05/2026")},
+    "havells": {"file": "havells_led_lamp.jpg", "manual_dates": None},
+}
+
 # ---------------------------------------------------------------------------
 # Icons (inline SVG, stroke = currentColor)
 # ---------------------------------------------------------------------------
 _P = {
     "ok": '<circle cx="12" cy="12" r="9.5"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
     "miss": '<circle cx="12" cy="12" r="9.5"/><path d="M8 12h8"/>',
-    "bad": '<circle cx="12" cy="12" r="9.5"/><path d="M12 7v5l3 2"/>',
+    "x": '<circle cx="12" cy="12" r="9.5"/><path d="m9.5 9.5 5 5"/><path d="m14.5 9.5-5 5"/>',
+    "clock": '<circle cx="12" cy="12" r="9.5"/><path d="M12 7v5l3 2"/>',
     "warn": '<path d="M10.3 3.9 2.5 17.5A2 2 0 0 0 4.2 20.5h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
     "unk": '<circle cx="12" cy="12" r="9.5"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>',
+    "cube": '<path d="M21 7.5 12 2.5 3 7.5v9l9 5 9-5z"/><path d="M3 7.5l9 5 9-5"/><path d="M12 12.5v9"/>',
+    "search": '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+    "bars": '<path d="M5 20v-6"/><path d="M10 20V9"/><path d="M15 20v-9"/><path d="M20 20V4"/>',
+    "info": '<circle cx="12" cy="12" r="9.5"/><path d="M12 11v5"/><path d="M12 7.5h.01"/>',
+    "ocr": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 9h8M8 12h8M8 15h5"/>',
+    "layers": '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
+    "calendar": '<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17"/><path d="M8 3v4M16 3v4"/>',
+    "cloud": '<path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 8.5a4.5 4.5 0 0 1-.5 9.5"/><path d="M12 12v8"/><path d="m8.5 15.5 3.5-3.5 3.5 3.5"/>',
+    "image": '<rect x="3.5" y="3.5" width="17" height="17" rx="2"/><circle cx="9" cy="9" r="1.6"/><path d="m20.5 15-4.5-4.5L6 20.5"/>',
+    "doc": '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/>',
+    "target": '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.2"/>',
+    "star": '<path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2L12 17.3 6.4 20.2l1.1-6.2L3 9.6l6.2-.9z"/>',
     "shield_ok": '<path d="M12 2.5 4 5.5v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10v-6z"/><path d="m8.5 12 2.5 2.5 4.5-5"/>',
-    "shield_bad": '<path d="M12 2.5 4 5.5v6c0 5 3.4 8.6 8 10 4.6-1.4 8-5 8-10v-6z"/><path d="m9.5 9.5 5 5"/><path d="m14.5 9.5-5 5"/>',
-    "scan": '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 9h10M7 12h10M7 15h6"/>',
 }
 
 
@@ -81,34 +100,102 @@ def get_metrics():
 
 # ---------------------------------------------------------------------------
 # Session state
+#   current   : the image being inspected {"data", "name", "digest", "origin"}
+#   analysis  : OCR + extracted fields for `current`
+#   overrides : manual date corrections {"mfg"/"exp": (date, precision, raw)}
+#   pending   : demo sample waiting to be analysed
 # ---------------------------------------------------------------------------
 ss = st.session_state
-ss.setdefault("uploader_key", 0)
-ss.setdefault("analysis", None)       # OCR + extracted fields for the current image
-ss.setdefault("overrides", {})        # manual date corrections
+for k, v in {"uploader_key": 0, "current": None, "analysis": None, "overrides": {}, "pending": None}.items():
+    ss.setdefault(k, v)
 
 
 def reset():
     ss.uploader_key += 1
-    ss.analysis = None
-    ss.overrides = {}
+    ss.current, ss.analysis, ss.overrides, ss.pending = None, None, {}, None
+
+
+def load_demo(key: str):
+    """Quick Demo button: load the sample photo; it is analysed on this run."""
+    data = (ROOT / "samples" / DEMO_SAMPLES[key]["file"]).read_bytes()
+    reset()
+    ss.current = {"data": data, "name": DEMO_SAMPLES[key]["file"],
+                  "digest": hashlib.md5(data).hexdigest(), "origin": "sample"}
+    ss.pending = key
+
+
+def parse_overrides(mfg_raw: str, exp_raw: str) -> tuple[dict, list[str]]:
+    new, errors = {}, []
+    for key, raw, name in (("mfg", mfg_raw, "Manufacturing date"), ("exp", exp_raw, "Expiry date")):
+        if raw.strip():
+            parsed = parse_user_date(raw)
+            if parsed:
+                value, precision = parsed
+                if key == "exp" and precision == "month":   # use-by month = valid through month end
+                    value = month_end(value)
+                new[key] = (value, precision, raw.strip())
+            else:
+                errors.append(f"{name}: could not understand '{raw}'.")
+    return new, errors
+
+
+def analyse(status_parent) -> None:
+    """Run the full pipeline on ss.current and store the result."""
+    with status_parent.status("Analysing label…", expanded=True) as status:
+        try:
+            st.write("Preprocessing image and reading text (first run loads the OCR model)…")
+            ocr = run_ocr(load_image(ss.current["data"]), reader=get_ocr_reader())
+            st.write(f"OCR read {ocr.word_count} words · mean confidence {ocr.mean_confidence:.0%}")
+            st.write("Extracting label fields, running ML model and date checks…")
+            fields = extract_fields(ocr.text, ocr.largest_text)
+            ss.analysis = {"digest": ss.current["digest"], "ocr": ocr, "fields": fields}
+            ss.overrides = {}
+            demo = DEMO_SAMPLES.get(ss.pending or "")
+            if demo and demo["manual_dates"]:
+                ss.overrides, _ = parse_overrides(*demo["manual_dates"])
+            status.update(label="Analysis complete", state="complete", expanded=False)
+        except Exception as exc:  # keep the app alive on any OCR failure
+            ss.analysis = None
+            status.update(label="Analysis failed", state="error")
+            st.error(f"Could not analyse this image: {exc}")
+        finally:
+            ss.pending = None
 
 
 # ---------------------------------------------------------------------------
-# Header
+# Header + hero
 # ---------------------------------------------------------------------------
 html(f"""
-<div class="app-header">
-  <div class="brand">
-    <div class="brand-mark">{icon('scan', size=24)}</div>
-    <div>
-      <h1>Packaged Commodity Compliance Classification</h1>
-      <p>Intelligent Product Label Inspection</p>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="tb-brand">
+      <span class="tb-logo">{icon('cube', size=34)}</span>
+      <span class="tb-title">Packaged Commodity Compliance<br>Classification from Product Labels</span>
+      <span class="tb-sep"></span>
+      <span class="tb-badge">SIH26034</span>
     </div>
+    <nav class="tb-nav">
+      <a class="active" href="#inspect" target="_self">{icon('search')} Inspect</a>
+      <a href="#model-performance" target="_self">{icon('bars')} Model Performance</a>
+      <a href="#about" target="_self">{icon('info')} About</a>
+    </nav>
   </div>
-  <div class="code-chip">PROJECT SIH26034</div>
-</div>
+</header>
+<div id="inspect" class="anchor"></div>
 """)
+
+hero_l, hero_r = st.columns([5, 6], gap="large", vertical_alignment="center")
+with hero_l:
+    html("""<div class="hero">
+      <h1 class="hero-title">Inspect Product Labels.<br><em class="hl">Identify Potential Violations.</em></h1>
+      <p class="hero-sub">Upload a product label to extract key information and classify the product
+      as Compliant or Non-Compliant.</p></div>""")
+with hero_r:
+    html(f"""<div class="features">
+      <div class="feature">{icon('ocr', size=34)}<b>OCR Extraction</b><span>Read label text</span></div>
+      <div class="feature">{icon('layers', size=34)}<b>ML Classification</b><span>Identify compliance</span></div>
+      <div class="feature">{icon('calendar', size=34)}<b>Date Validation</b><span>Check expiry / use-by</span></div>
+    </div>""")
 
 try:
     bundle = get_model()
@@ -116,55 +203,51 @@ except FileNotFoundError as exc:
     st.error(f"{exc}")
     st.stop()
 
-left, right = st.columns([5, 7], gap="large")
+left, right = st.columns([1, 2.3], gap="medium")
 
 # ---------------------------------------------------------------------------
-# Left: upload + preview
+# Left: upload card
 # ---------------------------------------------------------------------------
 with left:
-    html('<p class="section-title">Upload a Product Label</p>'
-         '<p class="section-sub">Drag and drop or browse · JPG, JPEG, PNG (HEIC also accepted)</p>')
-    upload = st.file_uploader("Product label image", type=["jpg", "jpeg", "png", "heic", "heif"],
-                              key=f"uploader_{ss.uploader_key}", label_visibility="collapsed")
+    with st.container(key="upload_card"):
+        html(f'<div class="card-head">{icon("cloud", size=26)}<span>Upload Product Label</span></div>')
+        upload = st.file_uploader("Product label image", type=["jpg", "jpeg", "png", "heic", "heif"],
+                                  key=f"uploader_{ss.uploader_key}", label_visibility="collapsed")
 
-    image = None
-    if upload is not None:
-        data = upload.getvalue()
-        digest = hashlib.md5(data).hexdigest()
-        if ss.analysis and ss.analysis["digest"] != digest:   # a different image was chosen
-            ss.analysis, ss.overrides = None, {}
-        try:
-            image = load_image(data)
-        except Exception:
-            st.error("This file could not be opened as an image. Please upload a JPG or PNG photo.")
+        # A new upload replaces whatever was being inspected (sample or earlier upload).
+        if upload is not None:
+            data = upload.getvalue()
+            digest = hashlib.md5(data).hexdigest()
+            if not ss.current or ss.current["digest"] != digest:
+                ss.current = {"data": data, "name": upload.name, "digest": digest, "origin": "upload"}
+                ss.analysis, ss.overrides, ss.pending = None, {}, None
+        elif ss.current and ss.current["origin"] == "upload":   # uploaded file was removed
+            ss.current, ss.analysis, ss.overrides = None, None, {}
 
-    c1, c2 = st.columns([3, 2])
-    analyse = c1.button("Analyze Label", type="primary", width="stretch", disabled=image is None)
-    c2.button("New scan", on_click=reset, width="stretch", disabled=upload is None)
-
-    if analyse and image is not None:
-        with st.status("Analysing label…", expanded=True) as status:
+        image_ok = True
+        if ss.current:
             try:
-                st.write("Preprocessing image and reading text (first run loads the OCR model)…")
-                ocr = run_ocr(image, reader=get_ocr_reader())
-                st.write(f"OCR read {ocr.word_count} words · mean confidence {ocr.mean_confidence:.0%}")
-                st.write("Extracting label fields and dates…")
-                fields = extract_fields(ocr.text, ocr.largest_text)
-                st.write("Running ML model and date checks…")
-                ss.analysis = {"digest": digest, "ocr": ocr, "fields": fields}
-                ss.overrides = {}
-                status.update(label="Analysis complete", state="complete", expanded=False)
-            except Exception as exc:  # keep the app alive on any OCR failure
-                ss.analysis = None
-                status.update(label="Analysis failed", state="error")
-                st.error(f"Could not analyse this image: {exc}")
+                preview = load_image(ss.current["data"])
+            except Exception:
+                image_ok = False
+                st.error("This file could not be opened as an image. Please upload a JPG or PNG photo.")
 
-    if image is not None:
-        html('<div class="preview-gap"></div>')
-        st.image(image[:, :, ::-1], width="stretch")
+        analyse_clicked = st.button("Analyze Label", type="primary", icon=":material/search:",
+                                    width="stretch", disabled=not (ss.current and image_ok))
+        st.button("New Scan", icon=":material/refresh:", width="stretch", on_click=reset,
+                  disabled=ss.current is None)
 
-    html("""<div class="pipeline"><span>OpenCV preprocessing</span><i>→</i><span>EasyOCR</span><i>→</i>
-    <span>Field extraction</span><i>→</i><span>ML model</span><i>→</i><span>Date validation</span></div>""")
+        html('<div class="demo-divider"><span>Quick Demo (Sample Products)</span></div>')
+        d1, d2 = st.columns(2, gap="small")
+        with d1:
+            st.button("Test Odonil Sample", key="demo_odonil", icon=":material/inventory_2:",
+                      width="stretch", on_click=load_demo, args=("odonil",))
+        with d2:
+            st.button("Test Havells Sample", key="demo_havells", icon=":material/lightbulb:",
+                      width="stretch", on_click=load_demo, args=("havells",))
+
+        if ss.current and image_ok and (analyse_clicked or ss.pending):
+            analyse(st)
 
 # ---------------------------------------------------------------------------
 # Right: results
@@ -175,19 +258,6 @@ def fmt_date(d: date | None, precision_month: bool) -> str:
     return d.strftime("%b %Y") if precision_month else d.strftime("%d %b %Y")
 
 
-def info_row(label: str, value: str | None, state: str, source: str | None = None, manual=False,
-             missing_text: str | None = None) -> str:
-    ico = {"ok": icon("ok", "ok"), "miss": icon("miss", "miss"), "bad": icon("bad", "bad"),
-           "unk": icon("unk", "warn")}[state]
-    if value:
-        v = escape(value) + ('<span class="tag-manual">manual</span>' if manual else "")
-        src = f'<span class="src">{escape(source)}</span>' if source else ""
-        body = f'<div class="v">{v}{src}</div>'
-    else:
-        body = f'<div class="v muted">{escape(missing_text or "Not detected")}</div>'
-    return f'<div class="info-row">{ico}<div class="k">{escape(label)}</div>{body}</div>'
-
-
 def value_state(value: str | None) -> str:
     """Green = read, amber = heading found but value unclear, grey = missing."""
     if not value:
@@ -195,27 +265,46 @@ def value_state(value: str | None) -> str:
     return "unk" if value.startswith("Declared") else "ok"
 
 
-def render_verdict(v: Verdict, expiry_text: str = ""):
+def info_row(label: str, value_html: str | None, note: str | None = None) -> str:
+    body = value_html if value_html else '<span class="muted">Not detected</span>'
+    if note:
+        body += f'<span class="note">{escape(note)}</span>'
+    return f'<tr><th>{escape(label)}</th><td>{body}</td></tr>'
+
+
+def pill(text: str, tone: str, manual: bool = False) -> str:
+    tag = '<span class="tag-manual">MANUAL</span>' if manual else ""
+    return f'<span class="pill {tone}">{escape(text)}</span>{tag}'
+
+
+def render_banner(v: Verdict | None, expiry_text: str = ""):
+    if v is None:
+        html(f"""<div class="result-banner idle"><div class="rb-main"><div class="rb-icon">{icon('search', size=26)}</div>
+          <div><div class="rb-kicker">Classification result</div><div class="rb-title">Ready to analyze</div></div></div>
+          <div class="rb-reason"><div class="rb-label">Next step</div>
+          <div class="rb-text">Press <b>Analyze Label</b> to read the label and classify it.</div></div></div>""")
+        return
     expired = any(i.kind == "expired" for i in v.issues)
-    reason = escape(v.reason)
     if v.status == "COMPLIANT":
         cls, ico, title = "ok", "shield_ok", "COMPLIANT"
-    elif v.status == "NON-COMPLIANT" and expired:
-        cls, ico, title = "bad", "shield_bad", "NON-COMPLIANT — EXPIRED PRODUCT"
-        reason = f"<b>Expiry Date:</b> {escape(expiry_text)}<br><b>Reason:</b> {reason}"
     elif v.status == "NON-COMPLIANT":
-        cls, ico, title = "bad", "shield_bad", "NON-COMPLIANT"
+        cls, ico, title = "bad", "x", "NON-COMPLIANT — EXPIRED PRODUCT" if expired else "NON-COMPLIANT"
     else:
         cls, ico, title = "unknown", "warn", "Unable to confidently analyze label"
+    if expired:
+        reason = (f'<div class="rb-text"><b>Expiry Date:</b> {escape(expiry_text)}</div>'
+                  f'<div class="rb-text"><b>Reason:</b> {escape(v.reason)}</div>')
+    else:
+        reason = f'<div class="rb-label">Reason</div><div class="rb-text">{escape(v.reason)}</div>'
     meta = ""
     if v.ml_probability is not None:
-        meta = (f'<div class="v-meta"><span>Model: {escape(v.model_name or "")}</span>'
-                f'<span>ML prediction: {v.ml_label.title()} ({max(v.ml_probability, 1 - v.ml_probability):.0%})</span>'
-                f'<span>Date check: {"failed" if v.date_rule_failed else "passed"}</span>'
-                f'<span>Completeness: {v.features["label_completeness"]:.0%}</span></div>')
-    html(f"""<div class="verdict {cls}"><div class="v-icon">{icon(ico, size=24)}</div><div>
-      <p class="v-kicker">Classification result</p><p class="v-title">{title}</p>
-      <p class="v-reason">{reason}</p>{meta}</div></div>""")
+        conf = max(v.ml_probability, 1 - v.ml_probability)
+        meta = (f'<div class="rb-meta">{escape(v.model_name or "")} · ML: {v.ml_label.title()} ({conf:.0%}) · '
+                f'Date check: {"failed" if v.date_rule_failed else "passed"} · '
+                f'Completeness: {v.features["label_completeness"]:.0%}</div>')
+    html(f"""<div class="result-banner {cls}"><div class="rb-main"><div class="rb-icon">{icon(ico, size=28)}</div>
+      <div><div class="rb-kicker">Classification result</div><div class="rb-title">{title}</div>{meta}</div></div>
+      <div class="rb-reason">{reason}</div></div>""")
 
 
 def date_correction(expanded: bool):
@@ -223,7 +312,7 @@ def date_correction(expanded: bool):
     mo, eo = ss.overrides.get("mfg"), ss.overrides.get("exp")
     with st.expander("Correct a misread date (manual correction)", expanded=expanded):
         st.caption("Use this only if OCR misread a printed or handwritten date. Values entered here are "
-                   "marked **manual** and are not OCR output. Formats: 05/2026, MAY 2026, 31/05/2026.")
+                   "marked **MANUAL** and are not OCR output. Formats: 05/2026, MAY 2026, 31/05/2026.")
         with st.form("manual_dates"):
             f1, f2 = st.columns(2)
             mfg_in = f1.text_input("Manufacturing date", value=mo[2] if mo else "", placeholder="e.g. 06/2020")
@@ -232,17 +321,7 @@ def date_correction(expanded: bool):
             apply_btn = b1.form_submit_button("Validate", type="primary", width="stretch")
             clear_btn = b2.form_submit_button("Clear corrections", width="stretch")
         if apply_btn:
-            new, errors = {}, []
-            for key, raw, name in (("mfg", mfg_in, "Manufacturing date"), ("exp", exp_in, "Expiry date")):
-                if raw.strip():
-                    parsed = parse_user_date(raw)
-                    if parsed:
-                        value, precision = parsed
-                        if key == "exp" and precision == "month":   # use-by month = valid through month end
-                            value = month_end(value)
-                        new[key] = (value, precision, raw.strip())
-                    else:
-                        errors.append(f"{name}: could not understand '{raw}'.")
+            new, errors = parse_overrides(mfg_in, exp_in)
             if errors:
                 st.error(" ".join(errors))
             else:
@@ -253,88 +332,128 @@ def date_correction(expanded: bool):
             st.rerun()
 
 
+def preview_card():
+    with st.container(key="preview_card"):
+        html(f'<div class="card-head small">{icon("image", size=20)}<span>Uploaded Label</span></div>')
+        if ss.current:
+            st.image(load_image(ss.current["data"])[:, :, ::-1], width="stretch")
+            html(f'<p class="file-name">{escape(ss.current["name"])}</p>')
+
+
 with right:
-    if ss.analysis is None:
-        html(f"""<div class="empty"><div class="icon">{icon('scan', size=26)}</div>
+    analysis = ss.analysis if ss.analysis and ss.current and ss.analysis["digest"] == ss.current["digest"] else None
+
+    if ss.current is None:
+        html(f"""<div class="empty"><div class="icon">{icon('ocr', size=28)}</div>
         <h3>Results will appear here</h3>
-        <p>Upload a clear photo of the label panel that shows MRP, net quantity, dates and manufacturer details, then press <b>Analyze Label</b>.</p></div>""")
+        <p>Upload a clear photo of the label panel, or try one of the sample products,
+        then press <b>Analyze Label</b>.</p></div>""")
+    elif analysis is None:
+        render_banner(None)
+        c1, _ = st.columns([1, 1.9])
+        with c1:
+            preview_card()
     else:
-        ocr, fields = ss.analysis["ocr"], ss.analysis["fields"]
+        ocr, fields = analysis["ocr"], analysis["fields"]
+        d = fields.dates
         today = date.today()
         mo, eo = ss.overrides.get("mfg"), ss.overrides.get("exp")
         verdict = check_label(fields, bundle, today=today,
                               mfg_override=mo[0] if mo else None,
                               expiry_override=eo[0] if eo else None)
-        dd = fields.dates
-        corrections_on_top = bool(ss.overrides) or (
-            verdict.status == "UNABLE" and bool(dd.get("date_declared") or dd.get("fragments")))
-        exp_display = (fmt_date(eo[0], eo[1] == "month") if eo else
-                       fmt_date(verdict.expiry_date, dd.get("expiry_precision") == "month"))
-        render_verdict(verdict, exp_display)
-        if corrections_on_top:
-            date_correction(expanded=True)
-
-        # ---- Product information --------------------------------------
-        d = fields.dates
+        exp_val = verdict.expiry_date
         mfg_txt = (fmt_date(mo[0], mo[1] == "month") if mo else
                    fmt_date(d.get("mfg_date"), d.get("mfg_precision") == "month"))
-        exp_val = verdict.expiry_date
         exp_txt = (fmt_date(eo[0], eo[1] == "month") if eo else
                    fmt_date(exp_val, d.get("expiry_precision") == "month"))
-        exp_state = "bad" if exp_val and exp_val < today else ("ok" if exp_val else "miss")
-        # Label declares a date but OCR could not read it -> amber "unable to detect".
-        unreadable = d.get("date_declared") or d.get("fragments")
+        unreadable = bool(d.get("date_declared") or d.get("fragments"))
+        corrections_on_top = bool(ss.overrides) or (verdict.status == "UNABLE" and unreadable)
+
+        render_banner(verdict, exp_txt)
+        if corrections_on_top:   # open only while the dates are still unreadable
+            date_correction(expanded=verdict.status == "UNABLE")
+
+        c_img, c_info, c_iss = st.columns([1, 1.32, 1], gap="small")
+        with c_img:
+            preview_card()
+
+        # ---- Product information --------------------------------------
         frag = ", ".join(f"'{f}'" for f in d.get("fragments") or [])
-        unreadable_note = "printed on label but not readable" + (f" · OCR fragments: {frag}" if frag else "")
-        mfg_state = "ok" if mfg_txt else ("unk" if unreadable else "miss")
-        if not exp_val and unreadable:
-            exp_state = "unk"
-        rows = [
-            info_row("Product name", fields.product_name, "ok" if fields.product_name else "miss",
-                     f"from {fields.product_name_source}" if fields.product_name_source else None),
-            info_row("Description", fields.description, "ok" if fields.description else "miss"),
-            info_row("MRP", fields.mrp, value_state(fields.mrp)),
-            info_row("Net quantity", fields.net_quantity, value_state(fields.net_quantity)),
-            info_row("Mfg. date", mfg_txt or None, mfg_state,
-                     "manual correction — not OCR output" if mo else
-                     (f'read "{d.get("mfg_raw")}" · {d.get("mfg_source")}' if d.get("mfg_raw") else None),
-                     manual=bool(mo), missing_text=unreadable_note if mfg_state == "unk" else None),
-            info_row("Use-by / expiry", (exp_txt + ("  · expired" if exp_state == "bad" else "")) or None, exp_state,
-                     "manual correction — not OCR output" if eo else
-                     (f'read "{d.get("expiry_raw")}" · {d.get("expiry_source")}' if d.get("expiry_raw") else None),
-                     manual=bool(eo),
-                     missing_text=unreadable_note if exp_state == "unk" else "Not declared on label, or not read"),
-            info_row("Manufacturer", fields.manufacturer, "ok" if fields.manufacturer else "miss"),
-            info_row("Address", fields.address, "ok" if fields.address else "miss"),
-            info_row("Customer care", fields.customer_care, "ok" if fields.customer_care else "miss"),
-        ]
-        html(f'<div class="panel"><h4>Product information</h4>{"".join(rows)}</div>')
+        unread_note = "Printed on label but not readable" + (f" (OCR read {frag})" if frag else "")
+        expired = bool(exp_val and exp_val < today)
+        if mfg_txt:
+            mfg_html = pill(mfg_txt, "blue", manual=bool(mo))
+            mfg_note = None if mo else (f'read "{d.get("mfg_raw")}"' if d.get("mfg_raw") else None)
+        else:
+            mfg_html, mfg_note = (f'<span class="muted">{escape(unread_note)}</span>', None) if unreadable else (None, None)
+        if exp_txt:
+            exp_html = pill(exp_txt + (" · expired" if expired else ""), "red" if expired else "blue", manual=bool(eo))
+            exp_note = None if eo else (f'read "{d.get("expiry_raw")}"' if d.get("expiry_raw") else None)
+        else:
+            exp_html = (f'<span class="muted">{escape(unread_note)}</span>' if unreadable
+                        else '<span class="muted">Not declared on label, or not read</span>')
+            exp_note = None
+
+        def val(v):
+            return escape(v) if v else None
+
+        rows = "".join([
+            info_row("Product name", val(fields.product_name),
+                     "largest text on label" if fields.product_name_source == "largest text on label" else None),
+            info_row("Description", val(fields.description)),
+            info_row("MRP", val(fields.mrp)),
+            info_row("Net quantity", val(fields.net_quantity)),
+            info_row("Mfg. date", mfg_html, mfg_note),
+            info_row("Use-by / expiry", exp_html, exp_note),
+            info_row("Manufacturer", val(fields.manufacturer)),
+            info_row("Address", val(fields.address)),
+            info_row("Customer care", val(fields.customer_care)),
+        ])
+        with c_info:
+            html(f'<div class="card"><div class="card-head small">{icon("doc", size=20)}<span>Product Information</span></div>'
+                 f'<table class="info-table">{rows}</table></div>')
 
         # ---- Detected issues --------------------------------------------
-        kind_icon = {"expired": icon("bad", "bad"), "date": icon("warn", "bad"), "missing": icon("miss", "miss"),
-                     "model": icon("warn", "warn"), "unable": icon("unk", "warn")}
-        if verdict.issues:
-            items = "".join(f'<div class="issue">{kind_icon[i.kind]}<div><b>{escape(i.title)}</b>'
-                            f'<small>{escape(i.detail)}</small></div></div>' for i in verdict.issues)
-        else:
-            items = f'<p class="no-issues">{icon("ok", "ok")} No configured issues detected.</p>'
-        html(f'<div class="panel"><h4>Detected issues</h4>{items}</div>')
+        items = []
+        for i in verdict.issues:
+            if i.kind == "missing":
+                continue                     # shown in the field checklist below
+            tone, ico = {"expired": ("bad", "x"), "date": ("bad", "warn"),
+                         "model": ("warn", "warn"), "unable": ("warn", "unk")}[i.kind]
+            items.append(f'<div class="issue-hero {tone}">{icon(ico, size=20)}<div><b>{escape(i.title)}</b>'
+                         f'<small>{escape(i.detail)}</small></div></div>')
+        field_values = {"mrp_present": fields.mrp, "quantity_present": fields.net_quantity}
+        for key, name in FIELD_NAMES.items():
+            short = name.split(" /")[0].replace("Manufacturing", "Date")
+            if key == "date_present":
+                state = "ok" if (mfg_txt or exp_txt) else ("unk" if unreadable else "miss")
+                text = {"ok": "Dates entered manually" if (mo or eo) else "Date detected",
+                        "unk": "Date printed but unreadable", "miss": "Date not detected"}[state]
+            elif not verdict.features.get(key):
+                state, text = "miss", f"{name} not detected"
+            elif value_state(field_values.get(key, "x")) == "unk":
+                state, text = "unk", f"{name} declared (value unclear)"
+            else:
+                state, text = "ok", f"{name} detected"
+            ico = {"ok": icon("ok", "ok", 20), "unk": icon("unk", "warn", 20), "miss": icon("miss", "miss", 20)}[state]
+            items.append(f'<div class="check-row {state}">{ico}<span>{escape(text)}</span></div>')
+        with c_iss:
+            html(f'<div class="card"><div class="card-head small">{icon("warn", size=20)}<span>Detected Issues</span></div>'
+                 f'{"".join(items)}</div>')
 
         if not corrections_on_top:
             date_correction(expanded=False)
 
-        # ---- OCR text + pipeline internals ------------------------------
+        # ---- OCR text + pipeline internals (for the viva) -----------------
         with st.expander("View Extracted Text"):
             st.caption(f"{ocr.word_count} words · mean OCR confidence {ocr.mean_confidence:.0%} · "
                        f"OCR pass used: {ocr.pass_used} image")
             st.code(ocr.text or "(no text read)", language=None)
-
         with st.expander("Preprocessing steps"):
             tabs = st.tabs(list(ocr.stages.keys()))
             for tab, (name, img) in zip(tabs, ocr.stages.items()):
                 with tab:
                     st.image(img if img.ndim == 2 else img[:, :, ::-1], width="stretch")
-
         with st.expander("Model input features"):
             feat_df = pd.DataFrame([verdict.features]).T.rename(columns={0: "value"})
             st.dataframe(feat_df, width="stretch")
@@ -342,33 +461,57 @@ with right:
                 st.caption(f"{verdict.model_name} · P(non-compliant) = {verdict.ml_probability:.3f}")
 
 # ---------------------------------------------------------------------------
-# Model performance (small, below the fold)
+# Model performance
 # ---------------------------------------------------------------------------
 metrics = get_metrics()
 if metrics:
-    st.markdown("<div style='height:2rem'></div>", unsafe_allow_html=True)
-    html('<p class="section-label">Model performance</p>')
-    best = metrics["models"][metrics["best_model"]]
-    m_left, m_right = st.columns([7, 5], gap="large")
-    with m_left:
-        html(f"""<p class="section-title">{escape(metrics['best_model'])}</p>
-        <p class="section-sub">Selected by {escape(metrics['selection_metric'])} · evaluated on {metrics['test_size']} held-out test rows · positive class = non-compliant</p>
-        <div class="metric-grid">
-          <div class="metric"><div class="m-label">Accuracy</div><div class="m-value">{best['accuracy']:.1%}</div></div>
-          <div class="metric"><div class="m-label">Precision</div><div class="m-value">{best['precision']:.1%}</div></div>
-          <div class="metric"><div class="m-label">Recall</div><div class="m-value">{best['recall']:.1%}</div></div>
-          <div class="metric"><div class="m-label">F1 score</div><div class="m-value">{best['f1']:.1%}</div></div>
-        </div>
-        <p class="disclaimer">Trained on a small <b>synthetic</b> dataset generated for this class project.
-        These numbers are educational and do not represent real-world regulatory accuracy.</p>""")
-        comp = pd.DataFrame(metrics["models"]).T[["accuracy", "precision", "recall", "f1", "cv_f1_mean"]]
-        comp.columns = ["Accuracy", "Precision", "Recall", "F1", "CV F1 (mean)"]
-        with st.expander("Compare all three models"):
-            st.dataframe(comp.style.format("{:.3f}"), width="stretch")
-    with m_right:
-        cm_path = ROOT / "evaluation" / "confusion_matrix.png"
-        if cm_path.exists():
-            st.image(str(cm_path), caption="Confusion matrix (test set)", width="stretch")
+    best_name = metrics["best_model"]
+    best = metrics["models"][best_name]
+    tiles = "".join(
+        f'<div class="tile {tone}">{icon(ico, size=30)}<span>{label}</span><b>{best[key]:.1%}</b></div>'
+        for tone, ico, label, key in (("blue", "target", "Accuracy", "accuracy"),
+                                      ("green", "layers", "Precision", "precision"),
+                                      ("purple", "bars", "Recall", "recall"),
+                                      ("amber", "star", "F1 Score", "f1")))
+    cm = best["confusion_matrix"]
+    cm_html = f"""<div class="cm"><div class="cm-title">Confusion Matrix (Test Set)</div>
+      <div class="cm-body"><div class="cm-y">Actual</div><div class="cm-grid">
+        <span class="cm-lab">Compliant</span><div class="cm-cell hi">{cm[0][0]}</div><div class="cm-cell lo">{cm[0][1]}</div>
+        <span class="cm-lab">Non-compliant</span><div class="cm-cell lo">{cm[1][0]}</div><div class="cm-cell hi">{cm[1][1]}</div>
+        <span></span><span class="cm-xlab">Compliant</span><span class="cm-xlab">Non-compliant</span>
+      </div></div><div class="cm-x">Predicted</div></div>"""
+    rows = "".join(
+        f'<tr class="{"best" if name == best_name else ""}"><td>{escape(name)}</td>'
+        f'<td>{m["accuracy"]:.3f}</td><td>{m["precision"]:.3f}</td><td>{m["recall"]:.3f}</td><td>{m["f1"]:.3f}</td></tr>'
+        for name, m in metrics["models"].items())
+    html(f"""<div id="model-performance" class="anchor"></div>
+    <section class="perf card">
+      <div class="card-head">{icon('bars', size=26)}<span>Model Performance</span></div>
+      <div class="perf-grid">
+        <div><div class="tiles">{tiles}</div>
+          <p class="disclaimer">{escape(best_name)} selected by {escape(metrics['selection_metric'])}; evaluated on
+          {metrics['test_size']} held-out rows (positive class = non-compliant). Trained on a small <b>synthetic</b>
+          dataset made for this class project, so these numbers are educational, not real-world accuracy.</p></div>
+        {cm_html}
+        <div class="compare"><div class="cm-title left">Model Comparison</div>
+          <table class="compare-table"><thead><tr><th>Model</th><th>Accuracy</th><th>Precision</th><th>Recall</th>
+          <th>F1 Score</th></tr></thead><tbody>{rows}</tbody></table></div>
+      </div>
+    </section>""")
 
-html('<p class="footer-note">SIH26034 · Educational demonstration. Results reflect a configured set of label checks, '
-     'not a legal compliance assessment.</p>')
+# ---------------------------------------------------------------------------
+# About
+# ---------------------------------------------------------------------------
+html(f"""<div id="about" class="anchor"></div>
+<section class="about card">
+  <div class="card-head">{icon('info', size=24)}<span>About this project</span></div>
+  <div class="about-grid">
+    <div><b>1 · OpenCV preprocessing</b><span>Resize, grayscale, denoise, contrast (CLAHE), threshold.</span></div>
+    <div><b>2 · EasyOCR</b><span>Reads the label text; words are grouped into lines and columns.</span></div>
+    <div><b>3 · Field extraction</b><span>Regex rules find MRP, quantity, dates, manufacturer, address, customer care.</span></div>
+    <div><b>4 · ML classification</b><span>Random Forest on 9 label features (compared with Logistic Regression and Decision Tree).</span></div>
+    <div><b>5 · Date validation</b><span>Expired or impossible dates make the label non-compliant. Unreadable dates are never guessed.</span></div>
+  </div>
+  <p class="footer-note">SIH26034 · Educational demonstration. Results reflect a configured set of label checks,
+  not a legal compliance assessment.</p>
+</section>""")
