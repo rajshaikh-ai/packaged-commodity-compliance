@@ -1,0 +1,86 @@
+{
+  "best_model": "Random Forest",
+  "selection_metric": "5-fold cross-validated F1 (training set)",
+  "positive_class": "non_compliant",
+  "test_size": 122,
+  "train_size": 366,
+  "cleaning": {
+    "raw_rows": 510,
+    "duplicates_removed": 10,
+    "rows_with_missing_values_removed": 12,
+    "clean_rows": 488,
+    "class_counts": {
+      "non_compliant": 245,
+      "compliant": 243
+    }
+  },
+  "models": {
+    "Logistic Regression": {
+      "accuracy": 0.959,
+      "precision": 0.9667,
+      "recall": 0.9508,
+      "f1": 0.9587,
+      "cv_f1_mean": 0.9488,
+      "cv_f1_std": 0.0337,
+      "confusion_matrix": [
+        [
+          59,
+          2
+        ],
+        [
+          3,
+          58
+        ]
+      ]
+    },
+    "Decision Tree": {
+      "accuracy": 0.959,
+      "precision": 0.9667,
+      "recall": 0.9508,
+      "f1": 0.9587,
+      "cv_f1_mean": 0.9461,
+      "cv_f1_std": 0.0298,
+      "confusion_matrix": [
+        [
+          59,
+          2
+        ],
+        [
+          3,
+          58
+        ]
+      ]
+    },
+    "Random Forest": {
+      "accuracy": 0.9672,
+      "precision": 0.9672,
+      "recall": 0.9672,
+      "f1": 0.9672,
+      "cv_f1_mean": 0.949,
+      "cv_f1_std": 0.0302,
+      "confusion_matrix": [
+        [
+          59,
+          2
+        ],
+        [
+          2,
+          59
+        ]
+      ]
+    }
+  },
+  "feature_importances": {
+    "mrp_present": 0.1519,
+    "quantity_present": 0.1953,
+    "manufacturer_present": 0.0153,
+    "address_present": 0.0153,
+    "date_present": 0.1062,
+    "customer_care_present": 0.0187,
+    "expiry_detected": 0.0254,
+    "is_expired": 0.2655,
+    "label_completeness": 0.2064
+  },
+  "trained_at": "2026-11-24T16:41:36",
+  "disclaimer": "Synthetic educational dataset. Metrics do not represent real-world performance."
+}

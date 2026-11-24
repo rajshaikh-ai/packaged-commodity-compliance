@@ -1,0 +1,5 @@
+.venv/
+__pycache__/
+*.pyc
+*.det.pkl
+.DS_Store
